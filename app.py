@@ -1,7 +1,8 @@
-from flask import Flask, render_template,request
+from flask import Flask, render_template,request,flash
 from flask import redirect
 import re
 from datetime import datetime
+from datetime import date
 import sqlite3
 
 import os
@@ -9,11 +10,11 @@ import google.generativeai as genai
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 model = genai.GenerativeModel("gemini-2.5-flash")
 
-
 app=Flask(__name__)
+app.secret_key = "health_prediction_secret"
 @app.route('/')
 def home():
-    return render_template('index.html')
+    return render_template('index.html',today=date.today().isoformat())
 
 #Read Patient Data
 @app.route('/patients')
@@ -44,18 +45,25 @@ def save():
     email_pattern = r'^[\w\.-]+@[\w\.-]+\.\w+$'
 
     if not re.match(email_pattern, email):
-        return "Invalid Email Address"
+        flash("Invalid Email Address", "error")
+        return redirect('/')
 
     #DOB VALIDATION
     dob_date = datetime.strptime(dob, "%Y-%m-%d").date()
 
     if dob_date > datetime.today().date():
-        return "Date of Birth cannot be in the future"
-
-    Glucose=float(request.form['Glucose'])
-    Haemoglobin=float(request.form['Haemoglobin'])
-    Cholesterol=float(request.form['Cholesterol'])
-
+        flash("Date of Birth cannot be in the future", "error")
+        return redirect('/')
+    
+    #Numeric Validation
+    try:
+        Glucose = float(request.form['Glucose'])
+        Haemoglobin = float(request.form['Haemoglobin'])
+        Cholesterol = float(request.form['Cholesterol'])
+    except ValueError:
+        flash("Blood test values must be numeric", "error")
+        return redirect('/')
+    
     # Gemini AI Prediction
     prompt = f"""
     You are a healthcare assistant.
@@ -66,26 +74,24 @@ def save():
     Haemoglobin: {Haemoglobin}
     Cholesterol: {Cholesterol}
 
-    Predict possible health risks and provide:
-    1. Risk Level
-    2. One short recommendation
+    Predict a possible health condition or disease risk.
 
-    Keep the answer under 40 words.
+    Return exactly in this format:
+
+    Possible Disease: <disease/risk>
+    Risk Status: <Low Risk / Moderate Risk / High Risk>
+    Recommendation: <short recommendation>
     """
 
     try:
         response = model.generate_content(prompt)
         remarks = response.text
-        remarks_lower = remarks.lower()
-        if "high" in remarks_lower:
-            risk_status = "High Risk"
-        elif "moderate" in remarks_lower:
-            risk_status = "Moderate Risk"
-        elif "low" in remarks_lower:
-            risk_status = "Low Risk"
-        else:
-            risk_status = "Unknown"
-
+        risk_status = "Unknown"
+        for line in remarks.split("\n"):
+            if line.startswith("Risk Status:"):
+                risk_status = line.replace("Risk Status:", "").strip()
+                break
+        
     except Exception as e:
         print("Gemini Error:", e)
         remarks = f"AI Error: {str(e)}"
@@ -165,3 +171,7 @@ def delete(id):
 
 if __name__=='__main__':
     app.run(debug=True)
+
+
+
+    
